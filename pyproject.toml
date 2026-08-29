@@ -1,0 +1,44 @@
+[project]
+name = "katlas-scripts"
+version = "1.0.0"
+description = "Reproducibility scripts and reusable packages for the KATLAS kinase-substrate specificity paper (figure + data generation)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "lily", email = "lcai888666@gmail.com" }]
+
+# Direct dependencies. Exact pinned versions used for the paper are in requirements-lock.txt.
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "scikit-learn",
+    "matplotlib",
+    "matplotlib-venn",
+    "seaborn",
+    "adjustText",
+    "logomaker-kinase",
+    "networkx",
+    "umap-learn",
+    "biopython",
+    "fastai",
+    "fastcore",
+    "torch",
+    "tqdm",
+    "joblib",
+    "cachetools",
+    "openpyxl",
+    "pyarrow",
+    # optional: only for recomputing protein-LM embeddings (kd_02b, embed_*)
+    # "transformers",
+    # "sentencepiece",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+# The four reusable packages are importable after `pip install -e .`.
+# The analysis scripts live in nbs/ and are run directly (python nbs/<script>.py).
+[tool.setuptools]
+packages = ["katlas", "kmodel", "kplot", "kprot"]
