@@ -85,7 +85,7 @@ pyarrow 24.0.0, openpyxl 3.1.5. Only to recompute embeddings: transformers 5.13.
 
 The data is distributed as a single zip on Google Drive (it is git-ignored here; the repo ships code only).
 
-1. Download `katlas-scripts-data.zip` (link provided separately).
+1. Download **[`katlas-scripts-data.zip`](https://drive.google.com/file/d/1iEyqw8YrBKzew2FeVIg7uO3ftEHr8mc_/view?usp=sharing)** (~1.2 GB) from Google Drive.
 2. Unzip its `raw/`, `katlas_datasets/`, `pssm/`, `out/` folders into `nbs/`:
    ```bash
    unzip katlas-scripts-data.zip -d nbs/
