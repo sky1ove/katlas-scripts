@@ -47,7 +47,9 @@ def main():
     print('non-pseudo kinases:', len(info))
 
     umap_fig(kdata.load('cddm'), info, 'UMAP of CDDM PSSM', FIG / 'CDDM_umap.svg')
-    umap_fig(kdata.load('pspa_scale').dropna(axis=1), info, 'UMAP of PSPA PSSM', FIG / 'PSPA_umap.svg')
+    pspa_u = kdata.load('pspa_scale').dropna(axis=1)
+    pspa_u = pspa_u[~pspa_u.index.astype(str).str.endswith('_TYR')]   # drop the 15 dual-spec _TYR duplicates
+    umap_fig(pspa_u, info, 'UMAP of PSPA PSSM', FIG / 'PSPA_umap.svg')
 
     if MLP_ATTR.exists():                                   # signed attribution matrix from motif_17
         umap_fig(pd.read_parquet(MLP_ATTR).fillna(0.0), info, 'UMAP of MLP-attr PSSM',

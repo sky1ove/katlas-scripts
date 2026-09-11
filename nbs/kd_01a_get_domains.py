@@ -124,9 +124,10 @@ def build(kd_all):
                   f'full_seq is only {len(r.full_seq):,} aa')
 
     df = df.sort_values(['Uniprot', 'domain_start']).reset_index(drop=True)
-    # KD1 / KD2 by order along the protein, so JAK1's two domains stay distinguishable
+    # KD1 / KD2 / ... by order along the protein, so JAK1's two domains stay distinguishable
+    # (cumcount, not duplicated: a >=3-domain protein must get KD1/KD2/KD3, never a repeated KD2)
     df['KD_ID'] = (df['Uniprot'] + '_' + df['Entry Name'] + '_KD'
-                   + (df.Uniprot.duplicated().astype(int) + 1).astype(str))
+                   + (df.groupby('Uniprot').cumcount() + 1).astype(str))
     return df.rename(columns=RENAME)[COLUMNS]
 
 

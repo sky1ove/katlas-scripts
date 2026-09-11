@@ -3,7 +3,6 @@
 Stacks the kinase's overall CDDM logo and each of its stratified sub-motif logos into one figure.
 `DATASET` selects the stratification:
   cddm      overall CDDM only            (kdata)
-  acceptor  per phospho-acceptor S/T/Y   (motif_01b → out/cddm_acceptor.parquet)
   kmeans    per k-means sub-motif        (motif_01c → out/cddm_kmeans.parquet)
 
 `plot_kinase(kinase, dataset)` returns the matplotlib figure and is imported by web_01 for
@@ -12,8 +11,8 @@ batch export; run as a script to save one example.
 The overall CDDM ('cddm') is drawn as a logo + heatmap; the stratifications stack the overall
 logo and each sub-motif logo.
 
-Inputs   kdata.load('cddm'); out/cddm_acceptor.parquet, out/cddm_kmeans.parquet
-Outputs  fig/<kinase>_<dataset>.svg   (dataset ∈ cddm / acceptor / kmeans)
+Inputs   kdata.load('cddm'); out/cddm_kmeans.parquet
+Outputs  fig/<kinase>_<dataset>.svg   (dataset ∈ cddm / cddm_lo / kmeans)
 
 Run:  python nbs/motif_01d_cddm_plot_example.py [KINASE] [DATASET]     # no DATASET -> all three; default kinase CDK7
 """
@@ -34,7 +33,7 @@ from katlas.pssm import recover_pssm
 from kplot.utils import save_svg
 
 #: dataset -> the column that labels each stratum (None = a single overall matrix, not stacked)
-STRAT = {'cddm': None, 'cddm_lo': None, 'acceptor': 'acceptor', 'kmeans': 'cluster'}
+STRAT = {'cddm': None, 'cddm_lo': None, 'kmeans': 'cluster'}
 META = ['kinase', 'cluster', 'acceptor', 'n_sites', 'best_k', 'ch', 'weight', 'bic']
 
 
@@ -93,7 +92,10 @@ def plot_kinase(kinase, dataset='kmeans', window=None, cddm_figsize=(13, 6), fig
         raise SystemExit(f'DATASET must be one of {list(STRAT)}')
     if dataset in ('cddm', 'cddm_lo'):
         is_lo = dataset == 'cddm_lo'
-        m = recover_pssm(kdata.load('cddm_LO' if is_lo else 'cddm').loc[kinase])
+        flat = kdata.load('cddm_LO' if is_lo else 'cddm').loc[kinase]
+        m = recover_pssm(flat)
+        if is_lo:                                        # cddm_LO stores NaN in undefined-odds cells (freq or bg == 0);
+            m = m.mask(recover_pssm(flat.notna().astype(float)).eq(0))   # recover_pssm's fillna(0) erased that mask - restore it so the heatmap renders them blank, not neutral-0
         if window is not None:
             m = m.loc[:, [c for c in m.columns if abs(int(c)) <= window]]
         label = 'CDDM log-odds' if is_lo else 'CDDM'

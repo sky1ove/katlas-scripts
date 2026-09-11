@@ -82,6 +82,8 @@ def paired_table(pairs):
         wide = perk[perk.branch == br].pivot_table(index='kinase', columns='method', values='top10')
         recs = []
         for i, b in enumerate(BASELINES):
+            if SHIPPED not in wide or b not in wide:          # skip a method absent for this branch
+                continue
             x = wide[[SHIPPED, b]].dropna()
             rep = su.wilcoxon_report(x[SHIPPED].to_numpy(), x[b].to_numpy(), seed=i)
             recs.append((b, len(x), rep))

@@ -9,11 +9,10 @@ leak-free too); the MLP trains on the inner-train and the sweep is scored on tha
 validation. The test set is scored from the same model as a generalization check, tagged with a
 `split` column so the figures never need a re-run, but it plays no part in the choice.
 
-The selected window is written to a file that scoring_04c reads.
+The validation-selected window is printed for the record; the scorer (scoring_04c) fixes +/-5 directly.
 
 Inputs   out/scoring_split.parquet, out/scoring_pool.parquet, out/scoring_cddm_seed0.parquet (key space), pspa
-Outputs  out/scoring_pairs/window_mlp_pairs.parquet, out/best_window_mlp.txt,
-         fig/window_mlp_sweep.svg
+Outputs  out/scoring_pairs/window_mlp_pairs.parquet, fig/window_mlp_sweep.svg
 
 Run:  python nbs/scoring_02a_window_mlp.py
 """
@@ -83,7 +82,7 @@ def main():
     pairs.to_parquet(out)
     print('saved', out, pairs.shape, '| splits:', sorted(pairs.split.unique()))
 
-    su.select_window(pairs, su.OUT / 'best_window_mlp.txt', 'MLP')
+    su.select_window(pairs, 'MLP')
     su.plot_window_sweep(
         pairs, FIG / 'window_mlp_sweep.svg',
         'CDDM-seq MLP — window sweep: VALIDATION (top, selects the window) vs '

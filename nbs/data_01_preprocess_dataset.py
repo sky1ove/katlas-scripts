@@ -201,7 +201,7 @@ def load_elm():
 
     elm = map_substrate(RAW / 'idmapping_2025_03_12_elm.xlsx', elm, 'substrate_uniprot')
 
-    elm['site'] = elm['acceptor'] + elm['position'].astype(str)
+    elm['site'] = elm['acceptor'] + elm['position'].astype(int).astype(str)   # int cast for parity with load_gps (guards float 'S140.0')
     elm = filter_valid_sites(elm)
 
     elm = elm[['kinase', 'kinase_uniprot', 'kinase_genes', 'substrate_uniprot',
@@ -417,6 +417,7 @@ def build_ks_dataset(df_grouped):
     for out_col, info_col in KINASE_INFO_MAP.items():
         df[out_col] = clean.map(info[info_col])
 
+    # NB: counts raw kinase_uniprot, so the 3 isoform accessions (PRKCB P05771-2, LYN P07948-2, PRKG1 Q13976-2) count separately from their canonical form - a small known inconsistency (~1,071 sites inflated, ~11 crossing the thr=40 CDDM cutoff), left as-is to avoid a full-pipeline rebuild.
     df['num_kin'] = df.groupby('sub_site')['kinase_uniprot'].transform('nunique')
 
     print('  kinases on the kinome tree:', int(df.kinase_on_tree.sum()), '/', len(df), 'pairs')

@@ -1,6 +1,7 @@
-"""helper · Export the supplementary tables.
+"""helper · Export the standalone dataset tables.
 
-Writes into `supplement_table/`:
+These are the plain full-dataset exports, not the paper's Supplementary Data S1-S7 (those are built by
+`helper_supplement_data.py` into `supplement_table/`). Writes into `out/`:
 
   kinase_info.csv    the 523 kinome-tree kinases and their annotation
   ks_dataset.csv     every kinase-substrate-site pair with its sources
@@ -18,7 +19,7 @@ against the ks_dataset background (motif_00), which pools all KS-dataset S/T/Y s
 on the all-uppercase site sequence.
 
 Inputs   kdata: kinase_info, ks_dataset, cddm, cddm_LO
-Outputs  supplement_table/kinase_info.csv, ks_dataset.csv, cddm.xlsx
+Outputs  out/kinase_info.csv, ks_dataset.csv, cddm.xlsx
 
 Run:  python nbs/helper_supplement_tables.py
 """
@@ -27,10 +28,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pandas as pd
+from paths import OUT
 
 import kdata
 
-SUPP = Path(__file__).resolve().parent / 'supplement_table'
+SUPP = OUT          # standalone dataset export; the paper's S1-S7 workbooks live in supplement_table/
 
 EXCEL_CELL_LIMIT = 32_767
 
@@ -71,7 +73,7 @@ def write_excel(sheets, fname):
 
 def main():
     SUPP.mkdir(exist_ok=True)
-    print('supplement_table:', SUPP)
+    print('out:', SUPP)
 
     print('\n== kinase_info ==')
     info = kdata.load('kinase_info')

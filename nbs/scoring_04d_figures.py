@@ -8,11 +8,12 @@ scoring_02a / 02b / 02c (window sweeps). Nine rows: two baselines plus the seven
           about sequence rather than about which kinases are common
 
 **Reported over the headline RepeatedStratifiedGroupKFold (K=5 × R=3).** The method pairs stamp
-`seed = repeat`; within a repeat the 5 folds cover every site once (one full-CV estimate), so the
-point estimate is the mean over repeats and the **error bar is the SD across the 3 repeats**
-(reproducibility under re-shuffle), NOT a parametric 95% CI over three non-independent 20% draws.
-Significance is a per-kinase paired Wilcoxon (printed) with a bootstrap 95% CI on the median per-kinase
-Δ (resampling kinases — the biological unit), which does not rely on the repeat count.
+`seed = repeat`; within a repeat the 5 folds cover every site once, and the 3 repeats pool to the
+point estimate. The **error bar is a kinase cluster-bootstrap 95% CI** (the biological unit is the
+kinase), the same honest interval the paper panels use (`scoring_fig2_panels`), computed here by the
+shared `overall_stats` / `group_stats` / `macro_by_window_ci` helpers. Significance is a per-kinase
+paired Wilcoxon (printed) with a bootstrap 95% CI on the median per-kinase Δ, which does not rely on
+the repeat count.
 (The window sweeps 02a/b/c keep the legacy 3-seed scheme — a supporting analysis.)
 
 **MAIN RESULT = the num_kin ≤ 10 test subset.** Sites hit by more than 10 kinases have unreliable
@@ -20,7 +21,7 @@ annotations (a whole subfamily can phosphorylate a site labelled for one member)
 reported where the ground truth is trustworthy. The candidate pool K is unchanged — only the test
 set is filtered.
 
-Three metrics only: micro recall@10, macro recall@10, AUCDF (recall@5 as a supplement). Micro
+Three metrics only: micro recall@10, macro recall@10, AUCDF. Micro
 weights every test pair equally; macro averages per kinase first, so rare kinases count as much as
 common ones.
 
@@ -44,7 +45,6 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 from paths import FIG
 
-from kplot.bar import plot_group_bar
 from kplot.utils import save_svg, set_sns
 
 #: source method name -> display name
@@ -64,7 +64,7 @@ GORDER = ['AGC', 'CAMK', 'CK1', 'CMGC', 'STE', 'TKL', 'NEK', 'Atypical', 'Other'
 
 #: PSPA's window labels are categorical (see scoring_02c's WINS); map them onto the numeric axis
 #: the other two sweeps use. An unmapped label would be dropped by the groupby, silently losing a
-#: point from the curve - macro_by_window asserts instead.
+#: point from the curve - macro_by_window_ci asserts instead.
 PW = {'±0': 0, '±1': 1, '±2': 2, '±3': 3, '±4': 4, 'full(-5..+4)': 5}
 WIN = {'CDDM PSSM (generative)': ('window_cddm_pairs.parquet', None, '#238b45', '-o'),
        'CDDM-seq MLP (discriminative)': ('window_mlp_pairs.parquet', None, '#f16913', '-s'),
@@ -116,36 +116,93 @@ def baseline_pairs(pairs, split, pools, kind):
     return pd.concat(out, ignore_index=True)
 
 
-def with_macro(pairs, keys, metric):
-    "Micro (over pairs) plus macro (per-kinase mean) for one metric."
-    o = su.summarize(pairs, keys)
-    mac = (su.summarize(pairs, keys + ['kinase']).groupby(keys)[metric]
-           .mean().rename('macro').reset_index())
-    o = o.merge(mac, on=keys)
-    o['micro'] = o[metric]
-    return o
+# ---------- kinase cluster-bootstrap 95% CI (biological replicate = the kinase) ----------
+# Canonical CI computation for the whole benchmark: scoring_fig2_panels imports these (as f4.*) for the
+# paper panels, so both figure sets use ONE honest error bar, a cluster bootstrap over kinases (the
+# independent unit), never the SD-across-repeats that understates uncertainty for near-deterministic methods.
+
+def _xerr(d, key):
+    "Asymmetric [below, above] error lengths from *_lo / *_hi CI columns (NaN CI -> 0 length)."
+    m = d[key].to_numpy(float)
+    e = np.vstack([m - d[f'{key}_lo'].to_numpy(float), d[f'{key}_hi'].to_numpy(float) - m])
+    return np.clip(np.nan_to_num(e, nan=0.0), 0, None)
 
 
-def overall_grid(dfov, metrics, fname, suptitle):
-    "Method on y, ST/TK rows, one column per metric; error bar = SD across the 3 CV repeats."
+def overall_stats(pairs):
+    "Per (branch, method): mean + kinase cluster-bootstrap 95% CI for AUCDF, micro and macro recall@10."
+    perk = su.summarize(pairs, ['method', 'branch', 'kinase'])
+    rows = []
+    for br in ['ST', 'Tyr']:
+        d = pairs[pairs.branch == br]
+        agg = su.summarize(d, ['method', 'branch']).set_index('method')       # pooled (micro) points
+        for m in ALL:
+            if m not in agg.index:
+                continue
+            ci = su.boot_micro_ci(d[d.method == m])                           # kinase cluster bootstrap
+            kv = perk[(perk.method == m) & (perk.branch == br)]['top10'].to_numpy()
+            mlo, mhi = su.boot_macro_ci(kv)
+            rows.append({'branch': br, 'method': m,
+                         'AUCDF': agg.loc[m, 'AUCDF'], 'AUCDF_lo': ci['AUCDF'][0], 'AUCDF_hi': ci['AUCDF'][1],
+                         'micro': agg.loc[m, 'top10'], 'micro_lo': ci['top10'][0], 'micro_hi': ci['top10'][1],
+                         'macro': float(kv.mean()), 'macro_lo': mlo, 'macro_hi': mhi})
+    return pd.DataFrame(rows)
+
+
+def group_stats(pairs, macro):
+    "Per (kinase group, method): mean + kinase cluster-bootstrap 95% CI for micro (pooled) or macro recall@10."
+    rows = []
+    if macro:
+        perk = su.summarize(pairs, ['method', 'kinase_group', 'kinase'])
+        for (m, g), sub in perk.groupby(['method', 'kinase_group'], observed=True):
+            kv = sub['top10'].to_numpy()
+            lo, hi = su.boot_macro_ci(kv)
+            rows.append({'kinase_group': g, 'method': m, 'mean': float(kv.mean()), 'lo': lo, 'hi': hi})
+    else:
+        agg = su.summarize(pairs, ['method', 'kinase_group']).set_index(['method', 'kinase_group'])
+        for (m, g), sub in pairs.groupby(['method', 'kinase_group'], observed=True):
+            lo, hi = su.boot_micro_ci(sub).get('top10', (np.nan, np.nan))
+            rows.append({'kinase_group': g, 'method': m, 'mean': agg.loc[(m, g), 'top10'], 'lo': lo, 'hi': hi})
+    return pd.DataFrame(rows)
+
+
+def macro_by_window_ci(fname, split, wmap, metric='top10', nk_cap=None):
+    "Per (window, branch): macro recall@10 (mean over kinases) with a bootstrap 95% CI over kinases."
+    p = pd.read_parquet(su.RES / fname)
+    p = p[p.split == split]
+    p = (p if nk_cap is None else p[p.num_kin <= nk_cap]).copy()
+    p['w'] = p.window.map(wmap) if wmap else p.window.astype(int)
+    unmapped = sorted(p.loc[p.w.isna(), 'window'].unique())
+    assert not unmapped, f'{fname}: window labels missing from the map: {unmapped}'
+    perk = su.summarize(p, ['w', 'branch', 'kinase'])
+    rows = []
+    for (w, br), g in perk.groupby(['w', 'branch'], observed=True):
+        kv = g[metric].to_numpy()
+        lo, hi = su.boot_macro_ci(kv, seed=int(w))
+        rows.append({'w': w, 'branch': br, 'mean': float(kv.mean()), 'lo': lo, 'hi': hi})
+    return pd.DataFrame(rows).set_index(['w', 'branch'])
+
+
+def overall_grid(stats, metrics, fname, suptitle):
+    "Method on y, ST/TK rows, one column per metric; error bar = kinase cluster-bootstrap 95% CI."
     fig, axes = plt.subplots(2, len(metrics), figsize=(4.8 * len(metrics), 7.0),
                              squeeze=False, sharey=True)
+    y = np.arange(len(ALL))[::-1]                                # ALL[0] (Random) at the top
+    colors = [PALETTE[m] for m in ALL]
     for ri, (brk, brl) in enumerate([('ST', 'ST'), ('Tyr', 'TK')]):
-        d = dfov[dfov.branch == brk]
+        d = stats[stats.branch == brk].set_index('method').reindex(ALL)
         for ci, (mk, ml) in enumerate(metrics):
             ax = axes[ri][ci]
-            # saturation=1.0: seaborn desaturates to 0.75 by default, which dulls PALETTE.
-            # errorbar='sd': spread across the 3 repeats (each a full 5-fold CV) — reproducibility
-            # under re-shuffle, not a parametric CI over non-independent draws.
-            sns.barplot(data=d, y='method', x=mk, order=ALL, hue='method', hue_order=ALL,
-                        palette=PALETTE, saturation=1.0, legend=False, errorbar='sd',
-                        capsize=.3, err_kws={'lw': 1, 'color': '0.4'}, ax=ax, orient='h')
-            ax.set_title(f'{brl} — {ml}', fontsize=11)
+            ax.barh(y, d[mk].to_numpy(float), color=colors, height=0.72)
+            ax.errorbar(d[mk].to_numpy(float), y, xerr=_xerr(d, mk), fmt='none',
+                        ecolor='0.4', elinewidth=1, capsize=2)                 # kinase-bootstrap 95% CI
+            ax.set_title(f'{brl}: {ml}', fontsize=11)
             ax.set_xlabel('')
             ax.set_ylabel('')
             if mk == 'AUCDF':
                 ax.set_xlim(0.45, None)
             ax.grid(axis='x', alpha=0.3)
+        axes[ri][0].set_yticks(y)
+        axes[ri][0].set_yticklabels(ALL)
     sns.despine(fig)
     fig.suptitle(suptitle, fontsize=12)
     plt.tight_layout(rect=[0, 0, 1, 0.97])
@@ -154,27 +211,18 @@ def overall_grid(dfov, metrics, fname, suptitle):
     print('  wrote', fname)
 
 
-def macro_by_window(fname, split, wmap, metric):
-    p = pd.read_parquet(su.RES / fname)
-    p = p[(p.num_kin <= su.NK_MAIN) & (p.split == split)].copy()
-    p['w'] = p.window.map(wmap) if wmap else p.window.astype(int)
-    unmapped = sorted(p.loc[p.w.isna(), 'window'].unique())
-    assert not unmapped, f'{fname}: window labels missing from the map: {unmapped}'
-    return (su.summarize(p, ['w', 'branch', 'seed', 'kinase'])
-            .groupby(['w', 'branch', 'seed'])[metric].mean()
-            .groupby(['w', 'branch']).agg(['mean', 'std']))
-
-
 def draw_window_fig(pools, split, fname, metric='top10', mlabel='recall@10'):
-    curves = {k: macro_by_window(v[0], split, v[1], metric) for k, v in WIN.items()}
+    "Macro recall@10 vs flank window; shaded band = kinase cluster-bootstrap 95% CI over kinases."
+    curves = {k: macro_by_window_ci(v[0], split, v[1], metric, nk_cap=su.NK_MAIN) for k, v in WIN.items()}
     xticks = sorted({int(x) for c in curves.values() for x in c.index.get_level_values('w')})
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.4))
     for ax, br in zip(axes, ['ST', 'Tyr']):
         for name, (_, _, col, mk) in WIN.items():
             d = curves[name].xs(br, level='branch').sort_index()
-            ax.errorbar(d.index, d['mean'], yerr=d['std'].fillna(0), fmt=mk, color=col, ms=6,
-                        lw=1.5, elinewidth=1.3, capsize=3, capthick=1.3, label=name)
+            x = d.index.to_numpy()
+            ax.fill_between(x, d['lo'], d['hi'], color=col, alpha=0.15, linewidth=0)   # 95% CI over kinases
+            ax.plot(x, d['mean'], mk, color=col, ms=6, lw=1.5, label=name)
         ax.set_xticks(xticks)
         ax.tick_params(axis='x', labelsize=9)
         chance = 10 / len(pools[br])
@@ -186,7 +234,7 @@ def draw_window_fig(pools, split, fname, metric='top10', mlabel='recall@10'):
         ax.set_title(br)
         ax.grid(alpha=0.3)
     axes[0].legend(fontsize=8, loc='lower right')
-    fig.suptitle(f'macro {mlabel} vs window — {split.upper()} set', fontsize=11)
+    fig.suptitle(f'macro {mlabel} vs window, {split.upper()} set (kinase-bootstrap 95% CI band)', fontsize=11)
     plt.tight_layout()
     save_svg(fname)
     plt.close('all')
@@ -194,27 +242,43 @@ def draw_window_fig(pools, split, fname, metric='top10', mlabel='recall@10'):
 
 
 def per_group_figs(pairs):
+    "Per-kinase-group recall@10, nine dodged bars per group; error bar = kinase cluster-bootstrap 95% CI."
     gorder = [g for g in GORDER if g in pairs.kinase_group.unique()]
-    micro = su.summarize(pairs, ['method', 'seed', 'kinase_group'])
-    macro = (su.summarize(pairs, ['method', 'seed', 'kinase_group', 'kinase'])
-             .groupby(['method', 'seed', 'kinase_group'])[['top5', 'top10']].mean().reset_index())
 
-    def group_bar(long, valcol, fname, title, ylabel):
-        wide = long.pivot_table(index=['kinase_group', 'seed'], columns='method',
-                                values=valcol).reset_index()
-        ax = plot_group_bar(wide, value_cols=ALL, group='kinase_group', order=gorder,
-                            figsize=(18, 5.5), rotation=0, fontsize=11, title=title,
-                            palette=PALETTE, hue_order=ALL, saturation=1.0, errorbar='sd')
+    def group_bar(stats, fname, title, ylabel):
+        nm = len(ALL); w = 0.8 / nm
+        S = stats.set_index(['kinase_group', 'method'])
+        fig, ax = plt.subplots(figsize=(18, 5.5))
+        for j, m in enumerate(ALL):
+            xs, ys, elo, ehi = [], [], [], []
+            for gi, g in enumerate(gorder):
+                if (g, m) in S.index:
+                    r = S.loc[(g, m)]
+                    xs.append(gi + (j - (nm - 1) / 2) * w)
+                    ys.append(r['mean'])
+                    elo.append(0.0 if np.isnan(r['lo']) else r['mean'] - r['lo'])
+                    ehi.append(0.0 if np.isnan(r['hi']) else r['hi'] - r['mean'])
+            ax.bar(xs, ys, width=w, color=PALETTE[m], linewidth=0, label=m)
+            if xs:
+                ax.errorbar(xs, ys, yerr=np.vstack([elo, ehi]), fmt='none',
+                            ecolor='0.4', elinewidth=0.8, capsize=0)             # kinase-bootstrap 95% CI
+        ax.set_xticks(range(len(gorder)))
+        ax.set_xticklabels(gorder, fontsize=11)
+        ax.set_xlim(-0.5, len(gorder) - 0.5)
+        ax.set_ylim(0, None)
         ax.set_ylabel(ylabel, fontsize=12)
+        ax.set_title(title, fontsize=12)
+        ax.grid(axis='y', alpha=0.3)
+        ax.legend(ncol=len(ALL), fontsize=8, loc='lower center',
+                  bbox_to_anchor=(0.5, 1.02), frameon=False)
+        sns.despine(ax=ax)
+        plt.tight_layout()
         save_svg(fname)
         plt.close('all')
 
-    for m, tag, lbl in [('top10', '', 'recall@10'), ('top5', '_r5', 'recall@5')]:
-        base = 'per kinase group — test (mean ± SD, 5-fold × 3-repeat CV)'
-        group_bar(micro.rename(columns={m: 'v'}), 'v', FIG / f'pergroup_micro{tag}.svg',
-                  f'micro {lbl} {base}', f'micro {lbl}')
-        group_bar(macro.rename(columns={m: 'v'}), 'v', FIG / f'pergroup_macro{tag}.svg',
-                  f'macro {lbl} {base}', f'macro {lbl}')
+    base = 'per kinase group, test (mean, kinase-bootstrap 95% CI)'
+    group_bar(group_stats(pairs, macro=False), FIG / 'pergroup_micro.svg', f'micro recall@10 {base}', 'micro recall@10')
+    group_bar(group_stats(pairs, macro=True), FIG / 'pergroup_macro.svg', f'macro recall@10 {base}', 'macro recall@10')
     print('  wrote fig/pergroup_*.svg')
 
 
@@ -257,28 +321,20 @@ def main():
                        baseline_pairs(pairs, split, pools, 'Dummy')], ignore_index=True)
     paired_wilcoxon(pairs)
 
-    keys = ['method', 'seed', 'branch']
-    ov = with_macro(pairs, keys, 'top10')
-    ov5 = with_macro(pairs, keys, 'top5')
-    print(ov.groupby(['branch', 'method'])[['micro', 'macro', 'AUCDF']]
-          .mean().round(3).to_string())
+    ostats = overall_stats(pairs)
+    print(ostats.set_index(['branch', 'method'])[['micro', 'macro', 'AUCDF']].round(3).to_string())
 
-    main_title = 'test (mean ± SD, 5-fold × 3-repeat CV)'
-    overall_grid(ov, [('micro', 'micro recall@10'), ('macro', 'macro recall@10')],
-                 FIG / 'overall_micro_macro.svg', f'Overall — {main_title}')
-    overall_grid(ov5, [('micro', 'micro recall@5'), ('macro', 'macro recall@5')],
-                 FIG / 'overall_micro_macro_r5.svg',
-                 f'Overall recall@5 [supplementary] — {main_title}')
-    overall_grid(ov, [('AUCDF', 'AUCDF')], FIG / 'overall_aucdf.svg',
-                 'Overall AUCDF — test (supplement)')
+    main_title = 'test (mean, kinase-bootstrap 95% CI)'
+    overall_grid(ostats, [('micro', 'micro recall@10'), ('macro', 'macro recall@10')],
+                 FIG / 'overall_micro_macro.svg', f'Overall: {main_title}')
+    overall_grid(ostats, [('AUCDF', 'AUCDF')], FIG / 'overall_aucdf.svg',
+                 f'Overall AUCDF: {main_title}')
 
     if all((su.RES / v[0]).exists() for v in WIN.values()):
         for split_name in ['val', 'test']:
             draw_window_fig(pools, split_name, FIG / f'window_macro_{split_name}.svg')
-            draw_window_fig(pools, split_name, FIG / f'window_macro_{split_name}_r5.svg',
-                            'top5', 'recall@5')
     else:
-        print('window figures skipped — run scoring_02a / scoring_02b / scoring_02c first')
+        print('window figures skipped - run scoring_02a / scoring_02b / scoring_02c first')
 
     per_group_figs(pairs)
 

@@ -116,7 +116,9 @@ def evaluate(M, ann, kin_uni, group, spec):
     rng = np.random.default_rng(SEED)
     nulls = []
     for _ in range(N_PERM):
-        perm = list(keep); rng.shuffle(perm)
+        perm = list(keep)
+        while len(keep) > 1 and any(a == b for a, b in zip(keep, perm)):
+            rng.shuffle(perm)                          # derangement: never score a kinase against its own profile
         nulls.append(np.mean([roc_auc_score(y[k], S[kp].values) for k, kp in zip(keep, perm)]))
     null = float(np.mean(nulls))
 

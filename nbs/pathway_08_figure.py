@@ -56,6 +56,17 @@ def per_kinase(spec, ann, kin_uni):
     return au, y
 
 
+def _derange(items, rng):
+    "A permutation of `items` with no fixed point: each kinase is scored against a DIFFERENT kinase's profile."
+    items = list(items)
+    if len(items) < 2:
+        return items
+    while True:
+        perm = list(items); rng.shuffle(perm)
+        if all(a != b for a, b in zip(items, perm)):
+            return perm
+
+
 def split_signal(spec, au, y, group):
     "Per split (S/T, TK): mean AUROC, permutation null (within split), signal."
     out = {}
@@ -63,7 +74,7 @@ def split_signal(spec, au, y, group):
                      ('TK', [k for k in au.index if group.get(k) == 'TK'])]:
         rng = np.random.default_rng(SEED); nulls = []
         for _ in range(N_PERM):
-            perm = list(sel); rng.shuffle(perm)
+            perm = _derange(sel, rng)
             nulls.append(np.mean([roc_auc_score(y[k], spec[kp].values) for k, kp in zip(sel, perm)]))
         m = au[sel].mean(); nu = float(np.mean(nulls))
         out[lab] = {'auroc': m, 'null': nu, 'signal': m - nu, 'n': len(sel)}
@@ -74,7 +85,7 @@ def _perm_null(sel, spec_m, y_m):
     "Mean AUROC over `sel` when each kinase is scored against a random kinase's profile."
     rng = np.random.default_rng(SEED); nl = []
     for _ in range(N_PERM):
-        perm = list(sel); rng.shuffle(perm)
+        perm = _derange(sel, rng)
         nl.append(np.mean([roc_auc_score(y_m[k], spec_m[kp].values) for k, kp in zip(sel, perm)]))
     return float(np.mean(nl))
 
@@ -90,6 +101,17 @@ def _violin_third(df, ylabel, methods, n, out_svg, title=None, null_by_method=No
             ax.plot([xi - 0.42, xi + 0.42], [null_by_method[m]] * 2, color='0.35', lw=1.0, ls='--')
     else:                                                     # null-corrected panel: null is 0
         ax.axhline(0, color='0.5', lw=0.7, ls='--')
+
+    # per method: a median tick (central tendency) and the % of kinases above the null (win rate,
+    # outlier-proof, since the mean can be pulled by a few high-AUROC kinases)
+    ymin, ymax = df.value.min(), df.value.max()
+    ax.set_ylim(ymin - 0.04 * (ymax - ymin), ymax + 0.10 * (ymax - ymin))
+    for xi, m in enumerate(methods):
+        v = df[df.method == m].value.values
+        ref = null_by_method[m] if null_by_method is not None else 0.0
+        ax.plot([xi - 0.22, xi + 0.22], [np.median(v)] * 2, color='0.1', lw=1.3, zorder=6)
+        ax.text(xi, ax.get_ylim()[1], f'{100 * np.mean(v > ref):.0f}%',
+                ha='center', va='top', fontsize=6, color='0.25')
     ax.set_xticks(range(len(methods)))
     ax.set_xticklabels([f'{m}\n(n={n[m]})' for m in methods])
     if title:
@@ -142,7 +164,7 @@ def build_group_violin(spec, au, yd, group, out_svg):
                 continue
             rng = np.random.default_rng(SEED); nl = []
             for _ in range(N_PERM):
-                perm = list(sel); rng.shuffle(perm)
+                perm = _derange(sel, rng)
                 nl.append(np.mean([roc_auc_score(yd[m][k], spec[m][kp].values) for k, kp in zip(sel, perm)]))
             null = float(np.mean(nl))
             rows += [{'group': g, 'method': m, 'recovery': au[m][k] - null} for k in sel]

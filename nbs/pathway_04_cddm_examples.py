@@ -11,10 +11,10 @@ pathways); red marks those that are also in the kinase's Reactome annotation (a 
 pathway), gray those predicted by the enrichment but not annotated to that kinase in Reactome (often
 its real biology Reactome does not annotate, e.g. CAMK2A -> Neurexins / synapse, not a wrong hit).
 
-Groups shown are the seven whose best member recovers cleanly (AGC, Atypical, CAMK, STE, Other, TK,
-TKL). CMGC (proline-directed [S/T]P), CK1 (acidic) and the singleton NEK do not yield specific
-enrichment - their substrate motifs are the most promiscuous, so their predicted substrates hit
-generic pathways; that is noted in the text rather than shown as empty panels.
+Groups shown: one well-studied kinase from each of eight kinase groups (AGC, Atypical, CAMK, CMGC,
+STE, Other, TK, TKL), matching the eight panels of the paper figure. CK1 (acidic) and the singleton
+NEK are the most promiscuous motifs, so their predicted substrates hit generic pathways; that is
+noted in the text rather than shown as empty panels.
 
 Inputs   out/pathway_cddm_sc_info.parquet (pathway_01b), kdata: human_site, kinase_info;
          Data.reactome_pathway  (all via pathway_07.universe / ora_matrix)

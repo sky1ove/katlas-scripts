@@ -18,12 +18,14 @@ katlas-scripts/
 ├── nbs/                               # flat analysis scripts (run directly) + shared infra + the data store
 │   ├── paths.py  kdata.py             # data-path resolution (see below)
 │   ├── stats_util.py  scoring_util.py  kd_util.py  motif_util.py   # shared helpers
-│   ├── data_*.py  motif_*.py  scoring_*.py  kd_*.py  pathway_*.py  # the 61 analysis scripts
+│   ├── data_*.py  motif_*.py  scoring_*.py  kd_*.py  pathway_*.py  # the 59 analysis scripts
+│   ├── helper_supplement_data.py      # builds Supplementary Data S1–S7
 │   ├── raw/                # read-only source inputs          ┐
 │   ├── katlas_datasets/    # the reference-dataset store      │ shipped as a Google Drive
 │   ├── pssm/               # per-kinase PSSM store            │ zip (git-ignored); unzip here
 │   ├── out/                # intermediate + final artifacts   ┘
-│   └── fig/                # figure outputs (SVG/PDF), written by the scripts
+│   ├── fig/                # figure outputs (SVG/PDF), written by the scripts
+│   └── supplement_table/   # Supplementary Data S1–S7 workbooks, written by helper_supplement_data.py
 ├── pyproject.toml          # package metadata + dependencies
 ├── requirements-lock.txt   # exact pinned versions used for the paper
 └── README.md
@@ -156,7 +158,28 @@ motif_17                                    # MLP-attribution PSSM (retrains the
 | Fig. 8 | a–h pathway examples; i–k kinome-wide recovery | `pathway_04_cddm_examples.py`; `pathway_08_figure.py` |
 
 Supplementary Fig. 2h (the PAK6 example) is `kd_fig7_panels.train_example('<PAK6 id>', 'PAK6')`, run
-separately. Supplementary tables come from `helper_supplement_tables.py` and `helper_kinase_method_table.py`.
+separately.
+
+**Supplementary Data S1–S7** (the seven Excel workbooks accompanying the paper) are built by
+`helper_supplement_data.py`, which reads only persisted artifacts and re-fits nothing:
+
+```bash
+python nbs/helper_supplement_data.py          # all seven workbooks into nbs/supplement_table/
+python nbs/helper_supplement_data.py S1 S4    # only some
+```
+
+| Workbook | Contents | Upstream producers |
+|---|---|---|
+| S1 kinase annotation | the 523-kinase table + per-kinase method coverage | `data_04`, `data_05`, `helper_kinase_method_table` |
+| S2 kinase-substrate dataset | per-pair records, per-kinase counts, unique sites with `num_kin`, cutoff coverage | `data_01`, `data_03` |
+| S3 kinase-assignment benchmark | Fig. 2 out-of-fold scores overall + by group + paired stats | `scoring_04*`, `scoring_04e` |
+| S4 PSSMs and specificity | Fig. 3/5/6 matrices, agreement with PSPA, specificity index, KLD, flanking-pY | `motif_01`, `motif_02`, `motif_10`, `motif_17`, `motif_16`, `motif_09b`, `motif_23`, `motif_26` |
+| S5 kinase-domain model | Fig. 7 / Supp. Fig. 2 model×feature CV, leave-one-out, proximity cutoff, external validation | `kd_04b`, `kd_04d`, `kd_06b`, `kd_09`, `motif_07` |
+| S6 predicted kinase domains | the 4,209-domain deliverable workbook (copied verbatim) | `kd_10` |
+| S7 pathway recovery | Fig. 8 kinome-wide recovery per method + per-kinase CDDM | `pathway_07`, `pathway_08` |
+
+`helper_supplement_tables.py` is separate: it writes the plain full-dataset exports
+(`out/kinase_info.csv`, `out/ks_dataset.csv`, `out/cddm.xlsx`), not the S1–S7 workbooks.
 
 ---
 
@@ -189,6 +212,7 @@ motif_23_priming_rationale   # flanking-pY rationale (Fig. 6a–d)
 motif_24_figstrat_panels     # Fig. 4a,b
 motif_25_stratify_pspa       # Fig. 4c–f
 motif_fig3_panels            # Fig. 3
+motif_26_cddm_pspa_kld       # PSPA-reference KLD for CDDM (the KLD columns in Supplementary Data S4)
 ```
 **scoring** (kinase-for-a-site benchmark)
 ```
@@ -207,15 +231,24 @@ kd_02a_onehot → kd_02b_embed               # one-hot + ProtT5/ESM features
 kd_03_prepare_data                         # pair features with PSPA / CDDM / MLP-attr targets
 kd_04a_tune → kd_04b_model_comparison      # grid search (TUNE_SEED=100) → repeated CV scoring
 kd_04c_dnn                                 # neural-net baseline
-kd_06b_confidence_threshold                # proximity cutoff + tiers
-kd_07_predict_novel                        # predict unlabeled domains
+kd_04d_grid_figures                        # grid figures + kd_model_selection.xlsx (Supplementary Data S5)
+kd_07_predict_novel                        # predict all domains (nn_dist rides along)
+kd_06b_confidence_threshold                # proximity cutoff + tiers; annotates kd_07's output IN PLACE,
+                                           #   so it runs AFTER kd_07 despite the lower number
 kd_09_validate_nonhuman                    # external PhosphoSitePlus ortholog validation (Fig. 7d)
 kd_fig7_panels                             # Fig. 7 + Supp. Fig. 2f–h
+kd_10_prediction_excel                     # the 4,209-domain prediction workbook (Supplementary Data S6)
 ```
 **pathway** (predicted substrates → pathways, Fig. 8)
 ```
 pathway_01_score_sites → pathway_01b_sitecentric → pathway_06_mlp_score → pathway_07_local_ora
 pathway_04_cddm_examples  (Fig. 8a–h)   pathway_08_figure  (Fig. 8i–k)
+```
+**supplement** (run last; reads persisted artifacts only)
+```
+helper_kinase_method_table   # per-kinase method coverage (feeds S1)
+helper_supplement_data       # Supplementary Data S1–S7 -> supplement_table/
+helper_supplement_tables     # standalone full-dataset exports -> out/
 ```
 
 ---
@@ -313,6 +346,9 @@ Key artifacts the figures consume (all under `nbs/out/` unless noted):
 | `kd_confidence_threshold.parquet` | `kd_06b` | Fig. 7b |
 | `kd_pred_new_*.parquet`, `kd_validation_*.csv` | `kd_07`, `kd_09` | Fig. 7c,d |
 | `pathway_localora_eval.parquet` | `pathway_07` | Fig. 8i–k |
+| `kd_model_selection.xlsx` | `kd_04d` | Supplementary Data S5 |
+| `kd_predictions.xlsx` | `kd_10` | Supplementary Data S6 |
+| `motif_cddm_pspa_kld_scores.csv` | `motif_26` | Supplementary Data S4 |
 
 **Checks.** Each script prints the shapes/counts it reads and writes. To confirm the environment is wired
 correctly before a full run:

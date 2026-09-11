@@ -5,11 +5,13 @@ noisier labels and, arguably, less informative training examples — these two s
 `num_kin ≤ 40` training cutoff used everywhere else.
 
 1. **Training sweep** — retrain the CDDM-seq MLP with the training set capped at each cutoff in
-   NUMKINS, and **select the cutoff on a held-out VALIDATION carve, never on test** (the same
-   leak-free protocol the flank-window sweep uses in scoring_02a): a stratified group 20% validation
-   set is carved out of train, the MLP fits on the inner-train, and each cutoff is scored on that
-   validation set. The test set is scored from the same model as a generalization check, tagged with
-   a `split` column, so the choice never touches test. The selected cutoff is written to a file.
+   NUMKINS and score each on a **held-out VALIDATION carve, never on test** (the same leak-free
+   protocol the flank-window sweep uses in scoring_02a): a stratified group 20% validation set is
+   carved out of train, the MLP fits on the inner-train, and each cutoff is scored on that validation
+   set. The test set is scored from the same model as a generalization check, tagged with a `split`
+   column, so nothing touches test. Validation recall plateaus from ~40 upward (argmax is a few steps
+   higher), so the shipped cutoff `num_kin ≤ 40` (su.BASE_NUMKIN) is a coverage / motif-quality
+   trade-off documented in Methods, not the raw validation argmax; the sweep is reported for the record.
 2. **Test stratification** — fix the MLP (num_kin ≤ 40) and PSPA, score the whole test once, then
    bin the *test* sites by their own num_kin. This is descriptive (characterising test-site
    difficulty, selecting nothing), so it legitimately reports on test. Every pair carries its
@@ -18,8 +20,7 @@ noisier labels and, arguably, less informative training examples — these two s
 Single seed: the sets are large enough that the estimates are stable, and the sweep is 22 model fits.
 
 Inputs   out/scoring_split.parquet, out/scoring_pool.parquet, out/scoring_cddm_seed0.parquet (key space), pspa
-Outputs  out/scoring_pairs/numkin_sweep_pairs.parquet (val+test), out/scoring_pairs/numkin_strat_pairs.parquet,
-         out/best_numkin.txt
+Outputs  out/scoring_pairs/numkin_sweep_pairs.parquet (val+test), out/scoring_pairs/numkin_strat_pairs.parquet
 
 Run:  python nbs/scoring_03a_num_kin.py
 """
@@ -117,12 +118,14 @@ def main():
     sweep.to_parquet(su.RES / 'numkin_sweep_pairs.parquet')
     print('saved', su.RES / 'numkin_sweep_pairs.parquet', sweep.shape, '| splits:', sorted(sweep.split.unique()))
 
-    # cutoff SELECTED on VALIDATION (never test), mirroring the flank-window sweep in scoring_02a
+    # Validation-recall sweep, reported for the record. The shipped training cutoff (su.BASE_NUMKIN = 40)
+    # is a coverage / motif-quality trade-off (validation recall plateaus from ~40 upward), documented in
+    # Methods - NOT the raw validation argmax. Test is scored only as a generalization check (never selects).
     valm = su.summarize(sweep[sweep.split == 'val'], ['train_numkin']).set_index('train_numkin')['top10']
     testm = su.summarize(sweep[sweep.split == 'test'], ['train_numkin']).set_index('train_numkin')['top10']
     best = valm.idxmax()
-    (su.OUT / 'best_numkin.txt').write_text(str(best))
-    print(f'selected num_kin cutoff = {best} (VALIDATION argmax micro recall@10) -> out/best_numkin.txt')
+    print(f'validation argmax num_kin = {best} (recall@10 plateau); shipped cutoff = {su.BASE_NUMKIN} '
+          f'(coverage/motif-quality trade-off, see Methods)')
     print('  val :', {k: round(v, 3) for k, v in valm.items()})
     print('  test:', {k: round(v, 3) for k, v in testm.items()})
 

@@ -12,8 +12,7 @@ has no hard zeros, so it should not decline.
 The selected window is written to a file; scoring_04b reports on test at ±5.
 
 Inputs   out/scoring_split.parquet, out/scoring_pool.parquet
-Outputs  out/scoring_pairs/window_cddm_pairs.parquet, out/best_window_cddm.txt,
-         fig/window_cddm_sweep.svg
+Outputs  out/scoring_pairs/window_cddm_pairs.parquet, fig/window_cddm_sweep.svg
 
 Run:  python nbs/scoring_02b_window_cddm.py
 """
@@ -71,7 +70,7 @@ def main():
     pairs.to_parquet(out)
     print('saved', out, pairs.shape, '| splits:', sorted(pairs.split.unique()))
 
-    su.select_window(pairs, su.OUT / 'best_window_cddm.txt', 'PSSM')
+    su.select_window(pairs, 'PSSM')
     su.plot_window_sweep(
         pairs, FIG / 'window_cddm_sweep.svg',
         'Generative CDDM PSSM — window sweep: VALIDATION (top, selects the window) vs '

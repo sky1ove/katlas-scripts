@@ -34,10 +34,11 @@ from sklearn.model_selection import ParameterGrid, cross_val_predict
 from kmodel.ml import get_splits
 import kd_04b_model_comparison as k5
 
-TUNE_SEED = 100                          # the single partition on which hyperparameters are chosen —
-                                         # deliberately OUTSIDE kd_04b's REPEAT_SEEDS=[0,1,2] so no
-                                         # evaluation fold is ever reused for tuning (the config is fixed
-                                         # a priori on an independent partition; this is not nested CV)
+TUNE_SEED = 100                          # the single partition on which hyperparameters are chosen. It is
+                                         # a re-shuffle of the SAME labelled cohort (NOT a disjoint tuning
+                                         # set), with fold boundaries outside kd_04b's REPEAT_SEEDS=[0,1,2];
+                                         # the config is fixed a priori. This is not nested CV, and the
+                                         # comparative grid scores may be modestly optimistic (see docstrings).
 
 
 def tune_cell(name, est, grid, df, feat_col, target_col, splits, gmap):

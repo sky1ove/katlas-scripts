@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from motif_16_compare_methods import average_precision, combine_priming, recover
+from motif_16_compare_methods import average_precision, recover
 from paths import FIG, OUT
 
 import kdata
@@ -189,10 +189,9 @@ def plot_paper_stratification(specs=PAPER_LOGOS, window=5, per_logo=0.75):
     w = paper_panel(1 / 3, ratio=1.05)[0]
     for kinase, k, bold in specs:
         if bold is None and kinase in pspa.index:                   # default: bold the cluster closest to PSPA
-            ref = recover(pspa.loc[kinase])                         # combine_priming: _kmeans_forced returns a
-            aps = {int(lbl.split()[1]): average_precision(combine_priming(m), ref)   # raw aa x position matrix,
-                   for lbl, m in _kmeans_forced(kinase, k)}         # so it must be collapsed to the shared
-                                                                     # alphabet before scoring against PSPA
+            ref = recover(pspa.loc[kinase])                         # _kmeans_forced returns raw aa x position
+            aps = {int(lbl.split()[1]): average_precision(m, ref)   # matrices (s/t/y separate); average_precision
+                   for lbl, m in _kmeans_forced(kinase, k)}         # reindexes both to FEATURES (shared alphabet)
             bold = max(aps, key=lambda c: (aps[c] if aps[c] == aps[c] else -1))
         fig = plot_kmeans_stratification(kinase, k=k, window=window, figsize=(w, per_logo * (1 + k)),
                                          title=f'{kinase} ({grp.get(kinase)}), k={k}', bold_cluster=bold)

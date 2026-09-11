@@ -389,6 +389,16 @@ def boot_micro_ci(pairs_mb, B=N_BOOT, seed=0):
     return out
 
 
+def boot_macro_ci(vals, B=N_BOOT, seed=0):
+    "95% percentile CI for a macro metric (mean over kinases): resample KINASES with replacement, re-average."
+    v = np.asarray(vals, np.float64)
+    if len(v) < 3:
+        return (float('nan'), float('nan'))
+    rng = np.random.default_rng(seed)
+    bs = v[rng.integers(0, len(v), (B, len(v)))].mean(1)
+    return float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))
+
+
 def window_summary(pairs):
     "Per (split, window, seed, branch): AUCDF, micro recall@10, and macro recall@10 over groups."
     ov = summarize(pairs, ['split', 'window', 'seed', 'branch'])
@@ -398,17 +408,17 @@ def window_summary(pairs):
     return ov.merge(macro, on=['split', 'window', 'seed', 'branch'])
 
 
-def select_window(pairs, out_path, what):
-    """Window with the best micro recall@10 on the VALIDATION split, written to `out_path`.
+def select_window(pairs, what):
+    """Window with the best micro recall@10 on the VALIDATION split, reported for the record.
 
     Selection is on validation, never on test: picking a hyperparameter on the set you then
     report is circular. The test curve is printed alongside purely as a generalization check.
+    The chosen window is printed, not written to a file: the scorers (04b/04c) fix +/-5 directly.
     """
     val = summarize(pairs[pairs.split == 'val'], ['window', 'branch', 'seed']).groupby('window').top10.mean()
     test = summarize(pairs[pairs.split == 'test'], ['window', 'branch', 'seed']).groupby('window').top10.mean()
     best = val.idxmax()
-    Path(out_path).write_text(str(best))
-    print(f'selected {what} window = {best} (VALIDATION argmax micro recall@10) -> {out_path}')
+    print(f'selected {what} window = {best} (VALIDATION argmax micro recall@10)')
     print('  val :', {k: round(v, 3) for k, v in val.items()})
     print('  test:', {k: round(v, 3) for k, v in test.items()})
     return best

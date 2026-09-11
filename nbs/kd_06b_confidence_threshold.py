@@ -176,7 +176,12 @@ def main():
     rows = []
     for j, target in enumerate(TARGETS):
         c = cache[target]
-        pred = pd.read_parquet(OUT / f'kd_pred_new_{target}.parquet')   # annotate kd_07's predictions
+        pred_path = OUT / f'kd_pred_new_{target}.parquet'
+        if not pred_path.exists():                                     # depends on kd_07's output: run kd_07 first
+            raise FileNotFoundError(
+                f'{pred_path} missing - run kd_07_predict_novel.py before kd_06b (kd_06b annotates kd_07 output '
+                'in place; the true order is kd_07 -> kd_06b despite the numbering).')
+        pred = pd.read_parquet(pred_path)                              # annotate kd_07's predictions
         pred['nn_group'] = nearest_group(feat_all, c['feat_col'], c['X'], c['grp'], pred.index)
         pred['threshold'] = cut
         pred['predictable'] = pred.nn_dist <= cut

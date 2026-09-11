@@ -23,7 +23,8 @@ import scoring_util as su
 
 from katlas.scoring import get_pct_df, multiply_23, predict_kinase_df
 
-WINDOW = 5          # scoring_02b's validation argmax; ±5-12 is a flat plateau, ±5 = shortest interpretable motif
+WINDOW = 5          # matched to the MLP's ±5 window for a single-window comparison; CDDM's own validation
+                    # argmax is 9 on a flat plateau (±5-12), and ±5 is the shortest interpretable motif
 FORCE_PCT = True    # the w5 refs depend on the split/CDDM - recompute so stale refs are never reused
 
 

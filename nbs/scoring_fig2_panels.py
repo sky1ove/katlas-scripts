@@ -38,15 +38,6 @@ from paths import FIG
 from kplot.utils import paper_panel, save_svg, set_sns
 
 
-def _macro_ci(vals, B=su.N_BOOT, seed=0):
-    "Bootstrap 95% CI for macro recall@10: resample KINASES, re-average their per-kinase recall."
-    v = np.asarray(vals, float)
-    if len(v) < 3:
-        return (np.nan, np.nan)
-    rng = np.random.default_rng(seed)
-    bs = v[rng.integers(0, len(v), (B, len(v)))].mean(1)
-    return float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))
-
 #: short legend labels (drop the parenthetical descriptor: "PSPA", not "PSPA (experimental)")
 LABEL = {k: k.split(' (')[0] for k in f4.WIN}
 #: c/d metric columns (source column, display title); AUCDF first, then the two recall@10 views
@@ -56,22 +47,6 @@ OVMETRICS = [('AUCDF', 'AUCDF'), ('micro', 'micro recall@10'), ('macro', 'macro 
 def _cap(df, nk_cap):
     "Restrict to sites annotated by <= nk_cap kinases; nk_cap=None keeps every test site (the supplement)."
     return df if nk_cap is None else df[df.num_kin <= nk_cap]
-
-
-def macro_by_window_ci(fname, split, wmap, metric, nk_cap):
-    "Per (window, branch): macro recall@10 (mean over kinases) with a bootstrap 95% CI over kinases."
-    p = pd.read_parquet(su.RES / fname)
-    p = _cap(p[p.split == split], nk_cap).copy()
-    p['w'] = p.window.map(wmap) if wmap else p.window.astype(int)
-    unmapped = sorted(p.loc[p.w.isna(), 'window'].unique())
-    assert not unmapped, f'{fname}: window labels missing from the map: {unmapped}'
-    perk = su.summarize(p, ['w', 'branch', 'kinase'])            # per-kinase recall@10 at each window
-    rows = []
-    for (w, br), g in perk.groupby(['w', 'branch'], observed=True):
-        kv = g[metric].to_numpy()
-        lo, hi = _macro_ci(kv, seed=int(w))                     # vary seed by window
-        rows.append({'w': w, 'branch': br, 'mean': float(kv.mean()), 'lo': lo, 'hi': hi})
-    return pd.DataFrame(rows).set_index(['w', 'branch'])
 
 
 def load_methods(nk_cap):
@@ -89,7 +64,7 @@ def load_methods(nk_cap):
 def window_panel(pools, br, fname, nk_cap, split='test', frac=(50 / 1.3 * 1.45) / 180, ratio=1.45,
                  metric='top10', mlabel='recall@10'):   # height fixed at 50/1.3 mm (~38.5), width ~55.8 mm
     "One paper panel: macro recall@10 vs flank window; shaded band = bootstrap 95% CI over kinases."
-    curves = {k: macro_by_window_ci(v[0], split, v[1], metric, nk_cap) for k, v in f4.WIN.items()}
+    curves = {k: f4.macro_by_window_ci(v[0], split, v[1], metric, nk_cap) for k, v in f4.WIN.items()}
     xticks = sorted({int(x) for c in curves.values() for x in c.index.get_level_values('w')})
 
     fig, ax = plt.subplots(figsize=paper_panel(frac, ratio=ratio))
@@ -129,24 +104,6 @@ def load_pairs_full(nk_cap):
                       f4.baseline_pairs(pairs, split, pools, 'Dummy')], ignore_index=True)
 
 
-def overall_stats(pairs):
-    "Per (branch, method): mean + kinase-bootstrap 95% CI for AUCDF, micro and macro recall@10."
-    perk = su.summarize(pairs, ['method', 'branch', 'kinase'])
-    rows = []
-    for br in ['ST', 'Tyr']:
-        d = pairs[pairs.branch == br]
-        agg = su.summarize(d, ['method', 'branch']).set_index('method')    # pooled (micro) points
-        for m in f4.ALL:
-            ci = su.boot_micro_ci(d[d.method == m])                        # kinase cluster bootstrap
-            kv = perk[(perk.method == m) & (perk.branch == br)]['top10'].to_numpy()
-            mlo, mhi = _macro_ci(kv)
-            rows.append({'branch': br, 'method': m,
-                         'AUCDF': agg.loc[m, 'AUCDF'], 'AUCDF_lo': ci['AUCDF'][0], 'AUCDF_hi': ci['AUCDF'][1],
-                         'micro': agg.loc[m, 'top10'], 'micro_lo': ci['top10'][0], 'micro_hi': ci['top10'][1],
-                         'macro': float(kv.mean()), 'macro_lo': mlo, 'macro_hi': mhi})
-    return pd.DataFrame(rows)
-
-
 def _xerr(d, key):
     "Asymmetric [below, above] error lengths from the *_lo / *_hi CI columns (NaN CIs -> 0 length)."
     m = d[key].to_numpy(float)
@@ -178,23 +135,6 @@ def overall_panel(stats, branch, blabel, fname, frac=120 / 180, ratio=3.15):
     save_svg(fname)
     plt.close('all')
     print('  wrote', fname)
-
-
-def group_stats(pairs, macro):
-    "Per (kinase group, method): mean + kinase-bootstrap 95% CI for micro (pooled) or macro recall@10."
-    rows = []
-    if macro:
-        perk = su.summarize(pairs, ['method', 'kinase_group', 'kinase'])
-        for (m, g), sub in perk.groupby(['method', 'kinase_group'], observed=True):
-            kv = sub['top10'].to_numpy()
-            lo, hi = _macro_ci(kv)
-            rows.append({'kinase_group': g, 'method': m, 'mean': float(kv.mean()), 'lo': lo, 'hi': hi})
-    else:
-        agg = su.summarize(pairs, ['method', 'kinase_group']).set_index(['method', 'kinase_group'])
-        for (m, g), sub in pairs.groupby(['method', 'kinase_group'], observed=True):
-            lo, hi = su.boot_micro_ci(sub).get('top10', (np.nan, np.nan))
-            rows.append({'kinase_group': g, 'method': m, 'mean': agg.loc[(m, g), 'top10'], 'lo': lo, 'hi': hi})
-    return pd.DataFrame(rows)
 
 
 def group_panel(stats, metric, fname, frac=1.0, ratio=4.25):         # 180 mm wide, ~42 mm tall
@@ -255,12 +195,12 @@ def build(nk_cap, prefix):
     window_panel(pools, 'Tyr', FIG / f'{prefix}b_window_Tyr.svg', nk_cap)
 
     pairs = load_pairs_full(nk_cap)
-    ostats = overall_stats(pairs)
+    ostats = f4.overall_stats(pairs)
     overall_panel(ostats, 'ST', 'ST', FIG / f'{prefix}c_overall_ST.svg')
     overall_panel(ostats, 'Tyr', 'TK', FIG / f'{prefix}d_overall_TK.svg')
 
-    group_panel(group_stats(pairs, macro=False), 'micro recall@10', FIG / f'{prefix}e_pergroup_micro.svg')
-    group_panel(group_stats(pairs, macro=True), 'macro recall@10', FIG / f'{prefix}f_pergroup_macro.svg')
+    group_panel(f4.group_stats(pairs, macro=False), 'micro recall@10', FIG / f'{prefix}e_pergroup_micro.svg')
+    group_panel(f4.group_stats(pairs, macro=True), 'macro recall@10', FIG / f'{prefix}f_pergroup_macro.svg')
     method_legend_strip(FIG / f'{prefix}_method_legend.svg')
 
 

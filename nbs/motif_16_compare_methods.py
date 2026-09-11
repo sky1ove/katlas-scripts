@@ -17,10 +17,17 @@ complementary metrics, then averaged over kinases:
              |top5(a) ∩ top5(b)| / 5 — agreement on the residues that define the motif
 
 Residues compared, per pair (the maximal set both methods measure): the 20 standard amino acids,
-plus — when both sides carry phospho-priming — one combined pS/pT feature (`ST`) and pY (`y`).
-CDDM/MLP encode pS and pT separately, so their `ST` is `s + t`; PSPA reports pS == pT (the array
-can't distinguish them), so its `ST` is that single value; surface display has no priming, so any
-pair involving it drops `ST`/`y` and falls back to the 20 standard residues.
+plus, when both sides carry phospho-priming, the primed residues pS (`s`), pT (`t`) and pY (`y`) kept
+as separate features. CDDM/MLP encode pS and pT separately; PSPA cannot distinguish them, so its `s`
+is a duplicate of `t` (both the measured pT), and the metrics run on the flank (position 0 excluded),
+where that duplication is faithful, rather than collapsing the pair. This keeps a real pS-vs-pS /
+pT-vs-pT comparison for pairs that both resolve pS/pT (e.g. CDDM vs MLP-attr). Surface display has no
+primed residues, so any pair involving it has no `s`/`t`/`y` and falls back to the 20 standard residues.
+
+Fig 5 (the surface-display figure) is a deliberate exception. Because it lines up PSPA, CDDM and
+surface display side by side, and surface display has no priming, every method there is scored on the
+20 standard AAs (via `scored_on(AA20)`) so all rows share one fair footing. The by-group vs-PSPA set
+(`compare_vs_pspa_bygroup.csv`, feeding Fig 3) keeps the priming residues.
 
 Two views:
   1. method × method  — every pair, on the tyrosine kinases all four methods share (n = 12).
@@ -37,6 +44,7 @@ Outputs  out/compare_methods.csv, out/compare_methods_matrix.csv, out/compare_vs
 Run:  python nbs/motif_16_compare_methods.py
 """
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -55,10 +63,24 @@ from kplot.bar import plot_group_bar, plot_group_violin
 from kplot.utils import paper_panel, save_svg, set_sns
 
 AA20 = list('ACDEFGHIKLMNPQRSTVWY')
-FEATURES = AA20 + ['ST', 'y']                   # +combined pS/pT and pY; a pair uses the subset both have
+FEATURES = AA20 + ['s', 't', 'y']               # default alphabet: +pS/pT/pY kept separate; a pair uses the subset
+                                                # both have (PSPA's `s` duplicates `t`; the flank-only metric is
+                                                # faithful to that). Fig 5 (with surface display) swaps to 20 AA only
+                                                # via scored_on(AA20) so every method there is on one fair footing.
 FLANK = [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5]     # ±5, central acceptor (0) excluded
 MIN_RES = 5                                       # skip a position with < this many scored residues
 TOPK = 5
+
+
+@contextmanager
+def scored_on(feats):
+    "Temporarily score on residue alphabet `feats`; every metric reads the module-global FEATURES."
+    global FEATURES
+    saved, FEATURES = FEATURES, list(feats)
+    try:
+        yield
+    finally:
+        FEATURES = saved
 
 MLP_ATTR = OUT / 'mlp_attr_pssm_full.parquet'
 
@@ -86,20 +108,10 @@ def load_matrix(name):
     return pd.read_parquet(PSSM / f'{name}.parquet')
 
 
-def combine_priming(mat):
-    "Collapse phospho-priming to one `ST` (pS/pT) row: s+t, or s alone when s==t (PSPA); pY (`y`) stays."
-    if 's' not in mat.index or 't' not in mat.index:
-        return mat                                   # e.g. surface display carries no priming
-    s, t = mat.loc['s'], mat.loc['t']
-    st = s if np.allclose(s.fillna(0), t.fillna(0)) else s.add(t, fill_value=0)
-    out = mat.drop(index=['s', 't'])
-    out.loc['ST'] = st
-    return out
-
-
 def recover(row):
-    "Recover a flat PSSM row into an aa × position matrix with priming collapsed to ST/y."
-    return combine_priming(recover_pssm(row.dropna()))
+    "Recover a flat PSSM row into an aa x position matrix; primed residues s/t/y are kept as separate rows."
+    return recover_pssm(row.dropna())               # no priming collapse: FEATURES keeps s/t/y separate,
+                                                    # and the flank-only metric is faithful to PSPA's s==t
 
 
 def _cols(a, b):
@@ -493,7 +505,12 @@ def main():
     n = len(shared)
     print(f'{n} shared kinases: {shared}')
 
-    res, labels = compare(shared)
+    # Fig 5 compares across PSPA, CDDM and surface display; SD carries no phospho-priming, so every
+    # method is scored on the 20 standard AAs here for a fair like-for-like comparison.
+    with scored_on(AA20):
+        res, labels = compare(shared)                    # Fig 5 a/d (method x method)
+        ref12 = vs_pspa(restrict=shared)                 # Fig 5 b/e/c/f (vs PSPA, 12 shared Tyr)
+    refmax = vs_pspa()                                   # own PSPA overlap (no SD) keeps pS/pT/pY -> feeds Fig 3b
     res.to_csv(OUT / 'compare_methods.csv', index=False)
     mats = matrices(res, labels)
     for metric, M in mats.items():
@@ -502,7 +519,6 @@ def main():
     pd.concat({m: M for m, M in mats.items()}).to_csv(OUT / 'compare_methods_matrix.csv')
     plot_matrix(mats, n)
 
-    ref12, refmax = vs_pspa(restrict=shared), vs_pspa()
     ref12.assign(set='shared12').to_csv(OUT / 'compare_vs_pspa.csv', index=False)
     # per-kinase agreement with PSPA over each method's own PSPA overlap (the n~293 by-group set);
     # persisted so the paper Fig 5 panels derive from it rather than re-scoring (persist-then-derive).
