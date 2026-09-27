@@ -36,6 +36,7 @@ PATHS = {
     'pspa':             'PSPA/pspa_all_norm.parquet',
     'pspa_raw':         'PSPA/pspa_all_raw.parquet',
     'pspa_scale':       'PSPA/pspa_all_scale.parquet',
+    'pspa_raw_scale':   'PSPA/pspa_all_raw_scale.parquet',
     'pspa_enrich':      'PSPA/pspa_all_enrich.parquet',
     'pspa_st':          'PSPA/pspa_st_norm.parquet',
     'pspa_tyr':         'PSPA/pspa_tyr_norm.parquet',
@@ -103,16 +104,23 @@ def save(name: str, df: pd.DataFrame, index: bool | None = None) -> Path:
     p = path(name)
     p.parent.mkdir(parents=True, exist_ok=True)
 
+    # write to a temp file first, so a failed write never leaves the store without this dataset
+    tmp = p.with_name(f'.{p.name}.tmp')
+    try:
+        if p.suffix == '.csv':
+            df.to_csv(tmp, index=False if index is None else index)
+        else:
+            df.to_parquet(tmp, index=index)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
     if p.exists():
         old = ARCHIVE / PATHS[name]
         old.parent.mkdir(parents=True, exist_ok=True)
         p.replace(old)
         print(f'  archived previous {name} -> {old}')
-
-    if p.suffix == '.csv':
-        df.to_csv(p, index=False if index is None else index)
-    else:
-        df.to_parquet(p, index=index)
+    tmp.replace(p)
 
     clear_cache()
     print(f'  wrote {name} -> {p} {df.shape}')

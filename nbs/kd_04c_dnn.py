@@ -113,7 +113,7 @@ def main():
                 mk = lambda m=m: PSSM_model(len(fcol), len(tcol), model=m)
                 for r, seed in enumerate(REPEAT_SEEDS):            # one OOF pass per CV partition
                     splits = list(get_splits(tax, stratified='group', group=SPLIT_LEVEL, nfold=NFOLD, seed=seed))
-                    oof = train_dl_cv(df, fcol, tcol, splits, mk, n_epoch=N_EPOCH, lr=LR)
+                    oof = train_dl_cv(df, fcol, tcol, splits, mk, n_epoch=N_EPOCH, lr=LR, seed=seed)
                     P = oof.loc[np.arange(len(df)), tcol].to_numpy(float)
                     rows.append(score(tname, feature, m, r, Y, P, ridx, score_cols, ids))
                 print(f'  {tname:5} {feature:7} {m:5} done ({len(REPEAT_SEEDS)} repeats)', flush=True)

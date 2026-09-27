@@ -46,8 +46,8 @@ def get_cnt(data: pd.DataFrame | pd.Series | Sequence[str], # input data, list o
     
     cnt_df = grouped.pivot(index='aa', columns='Position', values='Count').fillna(0).astype(int)
 
-    ordered_aa = [aa for aa in aa_order if aa in cnt_df.index]
-    cnt_df = cnt_df.reindex(index=ordered_aa, columns=position, fill_value=0)
+    # always return every residue row, so matrices share one shape (an unseen residue is a 0 count)
+    cnt_df = cnt_df.reindex(index=aa_order, columns=position, fill_value=0)
     
     return cnt_df
 

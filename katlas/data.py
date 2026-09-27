@@ -83,15 +83,18 @@ def download(
     verbose: bool = True,  # Print status messages
     required_files: str | Path | list[str | Path] | None = None,  # Files that must exist after download
 ) -> None:
-    """Download dataset zip and extract to folder."""
+    """Download the dataset zip and merge it into the dataset folder.
+
+    Existing files are never deleted: without `force`, only files missing locally are added; with `force`,
+    files present in the zip overwrite their local copies and local-only files are kept. The zip is fully
+    downloaded and extracted into a temporary folder first, so a failed download leaves the store untouched."""
 
     url = "https://drive.google.com/uc?id=17wIl0DbdoHV036Z3xgaT_0H3LlM_W47l"
 
-    # if download_dir is provided, update cls DATASET_DIR to it, otherwise use tmp as default
+    # if download_dir is provided, update cls DATASET_DIR to it
     if download_dir is not None: cls.DATASET_DIR = _normalize_dir(download_dir)
 
     dataset_dir = cls.DATASET_DIR
-    zip_path = dataset_dir.parent / "katlas_dataset.zip"
 
     # set a lock path for FileLock, so that if multiple processes try to download, the one that come first will create the lock and others have to wait til the block is done.
     lock_path = dataset_dir.parent / "katlas_dataset.lock"
@@ -103,77 +106,58 @@ def download(
     with FileLock(str(lock_path)):
         missing_files = [rel_path for rel_path in required_list if not (dataset_dir / rel_path).exists()]
 
-        # if force is True, or dataset folder exist, or no missing file, no need to download
+        # download only when forced, when the folder is absent, or when a required file is missing
         needs_download = force or not dataset_dir.exists() or bool(missing_files)
 
         if not needs_download:
             if verbose: print(f"✅ Dataset exists at: {dataset_dir}")
             return
 
-        # prepare to download, clear the cache first
+        if verbose and missing_files: print(f"♻️ Dataset is missing {missing_files}; downloading into {dataset_dir}")
+
+        with tempfile.TemporaryDirectory(dir=dataset_dir.parent) as tmp:
+            tmp = Path(tmp)
+            zip_path = tmp / "katlas_dataset.zip"
+            extract_dir = tmp / "extract"
+
+            if verbose: print("⬇️ Downloading katlas_dataset.zip ...")
+            downloaded_file = gdown.download(url, output=str(zip_path), quiet=not verbose)
+            if downloaded_file is None or not Path(downloaded_file).exists():
+                raise RuntimeError(
+                    "Dataset download failed. "
+                    "Please check your internet connection or Google Drive permissions."
+                )
+
+            with zipfile.ZipFile(downloaded_file, "r") as zip_ref:
+                # safety check, prevent files write outside of the extract folder (zip-slip)
+                for member in zip_ref.namelist():
+                    if not (extract_dir / member).resolve().is_relative_to(extract_dir.resolve()):
+                        raise RuntimeError(f"Unsafe zip file detected (zip-slip): {member}")
+                zip_ref.extractall(extract_dir)
+
+            # the zip may wrap everything in a katlas_datasets/ folder
+            src_root = extract_dir / "katlas_datasets" if (extract_dir / "katlas_datasets").is_dir() else extract_dir
+
+            # merge: add missing files (or overwrite when forced); never delete anything local
+            n_added = 0
+            for src in src_root.rglob("*"):
+                if not src.is_file() or "__MACOSX" in src.parts: continue
+                dst = dataset_dir / src.relative_to(src_root)
+                if dst.exists() and not force: continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                n_added += 1
+
         cls.clear_cache()
 
-        if dataset_dir.exists(): # if dataset folder exists
-            if verbose:
-                if force: print(f"♻️ Removing existing folder: {dataset_dir}")
-                else: print(f"♻️ Dataset is missing {missing_files}; re-downloading to {dataset_dir}")
-            # remove existing dataset folder
-            shutil.rmtree(dataset_dir)
-
-        # create empty dataset folder
-        dataset_dir.mkdir(parents=True, exist_ok=True)
-
-        if verbose: print("⬇️ Downloading katlas_dataset.zip ...")
-
-        # download from Google Drive using gdown, save to zip_path
-        downloaded_file = gdown.download(url, output=str(zip_path), quiet=not verbose)
-
-        if downloaded_file is None or not Path(downloaded_file).exists():
-            raise RuntimeError(
-                "Dataset download failed. "
-                "Please check your internet connection or Google Drive permissions."
-            )
-
-        if verbose: print(f"📂 Extracting to {dataset_dir} ...")
-
-        with zipfile.ZipFile(downloaded_file, "r") as zip_ref:
-
-            # safety check, prevent files write outside of the dataset folder
-            for member in zip_ref.namelist():
-                member_path = dataset_dir / member
-                # resolve() can solve relative path to absolution path (../.. to upper level)
-                # is_relative_to() can check if the member_path is within the dataset folder
-                if not member_path.resolve().is_relative_to(dataset_dir.resolve()):
-                    # if not within dataset folder, it means zip files try to write outside of the folder, so stop
-                    raise RuntimeError(f"Unsafe zip file detected (zip-slip): {member}")
-            # extract all files to the dataset folder
-            zip_ref.extractall(dataset_dir)
-
-        wrapped_dir = dataset_dir / "katlas_datasets"
-        if wrapped_dir.exists():
-            for item in wrapped_dir.iterdir():
-                shutil.move(str(item), str(dataset_dir / item.name))
-            shutil.rmtree(wrapped_dir)
-
-        macosx_dir = dataset_dir / "__MACOSX"
-        if macosx_dir.exists():
-            shutil.rmtree(macosx_dir)
-
-        # check if required files are in the extracted dataset, if not, raise error
+        # check if required files are in the merged dataset, if not, raise error
         missing_after = [rel_path for rel_path in required_list if not (dataset_dir / rel_path).exists()]
         if missing_after:
             raise FileNotFoundError(f"Dataset download completed, but these files are still missing: {missing_after}")
 
-        try:
-            if verbose: print(f"🧹 Removing zip file: {downloaded_file}")
-            # remove the downloaded zip file to save space
-            Path(downloaded_file).unlink()
+        if verbose: print(f"✅ Done! {n_added} file(s) written to {dataset_dir}")
 
-        except Exception as e:
-            if verbose: print(f"⚠️ Could not remove {downloaded_file}: {e}")
-
-        if verbose: print(f"✅ Done! Extracted dataset is at: {dataset_dir}")
-
+# %% ../nbs/00_data.ipynb #a508476b
 @patch(cls_method=True)
 def read_file(
     cls: Data,  # Patched class receiver

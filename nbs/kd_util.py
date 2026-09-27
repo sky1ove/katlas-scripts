@@ -2,10 +2,11 @@
 
 The kd model is a k-nearest-neighbour retrieval over the domain embeddings — for a query kinase,
 its substrate PSSM is the inverse-distance-weighted mean of its nearest labelled kinases' PSSMs.
-kd_04b chose it: on this small set (~370 labelled kinases) a 5-NN beat every parametric model and a
-million-parameter CNN, which simply overfit. Retrieval also needs no training and no per-target
-loss — the same code scores the PSPA distribution and the signed MLP-attribution PSSM — and its
-nearest-neighbour distance is a natural confidence, used to decide which unknown domains to predict.
+The shipped model (kNN x one-hot, k=5) is prespecified for deployment reasons, not selected from
+kd_04b's grid: retrieval is interpretable, needs no training and no per-target loss (the same code
+scores the PSPA distribution and the signed MLP-attribution PSSM), suits the small labeled set
+(~370 kinases), and its nearest-neighbor distance is a free proximity measure, used to decide which
+unknown domains to predict. kd_04b's grid is descriptive: it shows kNN is competitive.
 """
 import re
 import sys
@@ -49,21 +50,6 @@ def retrieval_oof(X, Y, splits, k=RETRIEVAL_K):
     for tr, va in splits:
         P[va], nnd[va] = knn_predict(X[tr], Y[tr], X[va], k)
     return P, nnd
-
-
-def ridge_oof(X, Y, splits, alpha=1000.0):
-    """Out-of-fold ridge predictions — the parametric baseline the retrieval model is checked against.
-
-    Features are standardized per fold: ridge penalizes coefficients on the raw scale, so without it
-    the (unstandardized) embedding dimensions are shrunk unevenly and the fit collapses to the mean.
-    """
-    from sklearn.linear_model import Ridge
-    from sklearn.preprocessing import StandardScaler
-    P = np.zeros_like(Y)
-    for tr, va in splits:
-        sc = StandardScaler().fit(X[tr])
-        P[va] = Ridge(alpha=alpha).fit(sc.transform(X[tr]), Y[tr]).predict(sc.transform(X[va]))
-    return P
 
 
 # ---- deployment: the shipped predictor (configurable model), fit on the WHOLE labelled set ----------
@@ -111,11 +97,6 @@ def deploy_predict(model_name, X_ref, Y_ref, X_query, target, feature='onehot', 
         est = build_estimator(model_name, target, feature).fit(X_ref, Y_ref)
         pred = np.asarray(est.predict(X_query)).reshape(len(X_query), -1)
     return pred, nn_dist
-
-
-def average_precision(ref, pred, k=5):
-    "AP@k (NaN-safe) — thin alias for stats_util.nan_average_precision, kept for the kd_* import path."
-    return nan_average_precision(ref, pred, k)
 
 
 def flank_cells(target_col):
@@ -184,8 +165,8 @@ def ranked_box(ax, per_item, xlabel, order=None, winner=None):
 def load_train(target, feature):
     """One `kd_train_<target>_<feature>` table, split into (df, feature cols, target cols).
 
-    The join in kd_03 puts the target PSSM columns first and the feature columns after, so the
-    split is positional: everything from the feature table's width onwards is a feature.
+    The split is by name: a column of the feature table (`kd_feat_<feature>`) is a feature, every
+    other non-id column is a target PSSM cell.
     """
     path = OUT / f'kd_train_{target}_{feature}.parquet'
     if not path.exists():
@@ -211,10 +192,3 @@ def kinase_taxonomy(kd_ids):
     return out
 
 
-def subfamily_palette():
-    "subfamily -> the colour of its parent group, for the per-subfamily bar charts."
-    from katlas.utils import group_color
-    info = kdata.load('kinase_info')
-    gc = pd.DataFrame(group_color).T.reset_index(names='group')
-    pal = info[['group', 'subfamily']].merge(gc).drop(columns='group').set_index('subfamily')
-    return pal.apply(tuple, axis=1).to_dict()

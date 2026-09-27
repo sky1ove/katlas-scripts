@@ -47,11 +47,12 @@ def nan_spearman(a, b):
 def nan_average_precision(ref, pred, k=5):
     """AP@k: recover `ref`'s k strongest cells from `pred`'s ranking (directional). Cells that are NaN in
     either `ref` or `pred` are dropped FIRST — otherwise NaN sorts to the top of the ranking and both the
-    relevant set and the ranking get corrupted. Chance ≈ k / n_cells. NaN if no finite cells."""
+    relevant set and the ranking get corrupted. Chance ≈ k / n_cells. NaN unless more than k finite cells
+    remain: with n <= k every cell is relevant and AP is trivially 1 (the same rule as motif_16)."""
     ref, pred = _finite_pair(ref, pred)
-    if len(ref) == 0:
+    if len(ref) <= k:
         return np.nan
-    relevant = set(np.argsort(ref)[-k:])          # ref's k strongest cells (all of them if fewer than k)
+    relevant = set(np.argsort(ref)[-k:])          # ref's k strongest cells
     hits = ap = 0.0
     for rank, cell in enumerate(np.argsort(pred)[::-1], 1):
         if cell in relevant:

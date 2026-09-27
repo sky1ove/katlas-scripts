@@ -6,7 +6,9 @@ that kd_04b puts head to head.
 
 The embeddings are model inference over the 4,209 sequences, so they are read from
 `raw/{t5,esm}_kd.parquet` when present (they are) and only recomputed with `--embed`; ESM in
-particular needs the `esm` package, which is not currently installed.
+particular needs the `esm` package, which is not currently installed. `raw/` is read-only: a
+recomputed embedding goes to `out/kd_feat_{name}.parquet` only, and the frozen raw copy (which
+kd_08 and kd_fig7 read) is never overwritten.
 
 Inputs   out/kd_motif_labeled.parquet (kd_01b), raw/t5_kd.parquet, raw/esm_kd.parquet
 Outputs  out/kd_feat_t5.parquet, out/kd_feat_esm.parquet
@@ -30,7 +32,7 @@ def active_domains():
 
 
 def embeddings(kd_active, recompute):
-    "ProtT5 and ESM-2 embeddings of the domain sequences (cached in raw/ by default)."
+    "ProtT5 and ESM-2 embeddings of the domain sequences (the frozen raw/ copy unless recompute)."
     out = {}
     for name, cache in [('t5', RAW / 't5_kd.parquet'), ('esm', RAW / 'esm_kd.parquet')]:
         if not recompute and cache.exists():
@@ -41,7 +43,6 @@ def embeddings(kd_active, recompute):
             print(f'  {name}: computing over {len(kd_active)} domains...')
             feat = (get_t5 if name == 't5' else get_esm)(kd_active, 'kd_seq')
             feat.index = kd_active.kd_ID
-            feat.to_parquet(cache)
         out[name] = feat
     return out
 

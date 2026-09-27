@@ -164,14 +164,15 @@ def cv_objective(Y, P, flank, groups, mode=None):
     metric, scale-invariant across targets — recommended); 'pearson' — overall flank Pearson (smoother
     magnitude signal, but not comparable across differently-scaled targets); 'both' — their mean.
     """
-    from scipy.stats import spearmanr
+    # the same NaN-safe primitives kd_util.pssm_scores reports with, so tuning optimizes the reported metric
+    from stats_util import nan_pearson, nan_spearman
     mode = mode or TUNE_ON
 
     def sp_i(i):
-        return np.nanmean([spearmanr(Y[i][g], P[i][g]).correlation for g in groups if len(g) >= 3])
+        return np.nanmean([nan_spearman(Y[i][g], P[i][g]) for g in groups if len(g) >= 3])
 
     def pe_i(i):
-        return np.corrcoef(Y[i][flank], P[i][flank])[0, 1]
+        return nan_pearson(Y[i][flank], P[i][flank])
 
     if mode == 'spearman':
         vals = [sp_i(i) for i in range(len(Y))]

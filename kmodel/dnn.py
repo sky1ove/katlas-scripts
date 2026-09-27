@@ -18,6 +18,34 @@ from pathlib import Path
 
 def_device = 'mps' if torch.backends.mps.is_available() else 'cuda' if torch.cuda.is_available() else 'cpu'
 
+def seed_everything(seed: int = 123) -> None:
+    "Seed Python, NumPy, and PyTorch for reproducible experiments." 
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+def check_pssm_layout(target_col, A: int = 23) -> int:
+    """Check that flat PSSM columns named '{position}{residue}' are position-major (all A residues of one
+    position, then the next position) with the same residue order at every position; return the number of
+    positions. Every reshape in this module is `(n, positions, A)`, so any other layout would silently mix
+    positions inside one softmax."""
+    cols = [str(c) for c in target_col]
+    if len(cols) % A != 0:
+        raise ValueError(f"Target columns ({len(cols)}) not divisible by A={A}; cannot infer positions.")
+    blocks = [cols[i:i + A] for i in range(0, len(cols), A)]
+    residues = [c[-1] for c in blocks[0]]
+    for block in blocks:
+        positions = {c[:-1] for c in block}
+        if len(positions) != 1 or [c[-1] for c in block] != residues:
+            raise ValueError("Target columns must be position-major '{pos}{res}' blocks with one residue order; "
+                             f"got a block {block[:3]}...")
+    return len(blocks)
+
 class GeneralDataset(Dataset):
     def __init__(
         self,
@@ -33,12 +61,9 @@ class GeneralDataset(Dataset):
         self.X = df[list(feat_col)].to_numpy(dtype=dtype, copy=True)
         self.y = None
         if not self.test:
+            self.position = check_pssm_layout(target_col, A)
             y_flat = df[list(target_col)].to_numpy(dtype=dtype, copy=True)
-            total = y_flat.shape[1]
-            if total % A != 0:
-                raise ValueError(f"Target columns ({total}) not divisible by A={A}; cannot infer positions.")
-            self.position = total // self.aa
-            self.y = y_flat.reshape(-1, A, self.position)
+            self.y = y_flat.reshape(-1, self.position, A)   # (n, positions, residues)
         self.len = len(df)
 
     def __len__(self):
@@ -153,32 +178,32 @@ class PSSM_model(nn.Module):
             raise ValueError('model must be MLP or CNN.')
 
     def forward(self, x):
-        logits = self.model(x).reshape(-1, self.n_aa, self.n_positions)
-        return logits
+        "Per-position residue logits, shape (n, positions, A); the flat output is position-major."
+        return self.model(x).reshape(-1, self.n_positions, self.n_aa)
 
 def CE(logits: torch.Tensor, target_probs: torch.Tensor):
-    "Cross-entropy with soft labels." 
-    logp = F.log_softmax(logits, dim=1)
-    ce = -(target_probs * logp).sum(dim=1)
+    "Cross-entropy with soft labels, over the residue axis (last) of (n, positions, A) tensors." 
+    logp = F.log_softmax(logits, dim=-1)
+    ce = -(target_probs * logp).sum(dim=-1)
     return ce.mean()
 
 def KLD(logits: torch.Tensor, target_probs: torch.Tensor):
     "Average KL divergence across positions between target_probs and softmax(logits)." 
-    logq = F.log_softmax(logits, dim=1)
+    logq = F.log_softmax(logits, dim=-1)
     logp = torch.log(target_probs + 1e-8)
-    kl = (target_probs * (logp - logq)).sum(dim=1)
+    kl = (target_probs * (logp - logq)).sum(dim=-1)
     return kl.mean()
 
 def JSD(logits: torch.Tensor, target_probs: torch.Tensor):
     "Average Jensen-Shannon divergence across positions between target_probs and softmax(logits)." 
-    q = F.softmax(logits, dim=1)
+    q = F.softmax(logits, dim=-1)
     p = target_probs
     m = 0.5 * (p + q)
     logp = torch.log(p + 1e-8)
     logq = torch.log(q + 1e-8)
     logm = torch.log(m + 1e-8)
-    kld_pm = (p * (logp - logm)).sum(dim=1)
-    kld_qm = (q * (logq - logm)).sum(dim=1)
+    kld_pm = (p * (logp - logm)).sum(dim=-1)
+    kld_qm = (q * (logq - logm)).sum(dim=-1)
     return (0.5 * (kld_pm + kld_qm)).mean()
 
 def train_dl(
@@ -193,10 +218,12 @@ def train_dl(
     lr: float = 1e-2,
     loss=CE,
     save=None,
-    sampler=None,
     lr_find: bool = False,
+    seed: int | None = None,  # seed weight init + batch shuffling for a reproducible run
 ):
     "Train a deep learning model with the fastai learner stack." 
+    if seed is not None:
+        seed_everything(seed)
     train = df.iloc[split[0]]
     valid = df.iloc[split[1]]
 
@@ -221,7 +248,7 @@ def train_dl(
         learn.save(save)
 
     pred, target = learn.get_preds()
-    pred = F.softmax(pred, dim=1).reshape(len(valid), -1)
+    pred = F.softmax(pred, dim=-1).reshape(len(valid), -1)
     target = target.reshape(len(valid), -1)
 
     pred = pd.DataFrame(pred.detach().cpu().numpy(), index=valid.index, columns=target_col)
@@ -229,13 +256,15 @@ def train_dl(
     return target, pred
 
 
-def train_dl_cv(df, feat_col, target_col, splits, model_func, A: int = 23, save: str | None = None, **kwargs):
-    "Cross-validation training loop for deep learning models." 
+def train_dl_cv(df, feat_col, target_col, splits, model_func, A: int = 23, save: str | None = None,
+                seed: int | None = None, **kwargs):
+    "Cross-validation training loop for deep learning models; fold k is seeded with `seed + k`." 
     oof_frames = []
     for fold, split in enumerate(splits):
         print(f'------fold{fold}------')
         fname = f'{save}_fold{fold}' if save is not None else None
-        _, pred = train_dl(df, feat_col, target_col, split, model_func, A=A, save=fname, **kwargs)
+        _, pred = train_dl(df, feat_col, target_col, split, model_func, A=A, save=fname,
+                           seed=None if seed is None else seed + fold, **kwargs)
         pred['nfold'] = fold
         oof_frames.append(pred)
     return pd.concat(oof_frames).sort_index()
